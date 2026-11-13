@@ -1,0 +1,23 @@
+# Segreti e configurazione locale
+.env
+
+# Indice e documenti personali
+data/
+
+# Ambiente Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editor e sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
