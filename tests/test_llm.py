@@ -82,3 +82,45 @@ def test_factory() -> None:
     assert isinstance(create_llm(Settings(llm="echo")), EchoLLM)
     with pytest.raises(LLMError):
         create_llm(Settings(llm="gpt-magic"))
+
+
+def _prompt(question: str, *texts: str):
+    from rag_pdf_qa.models import Chunk, SearchResult
+    from rag_pdf_qa.prompt import build_prompt
+
+    contexts = [
+        SearchResult(chunk=Chunk(id=f"d.pdf:p1:c{i}", source="d.pdf", page=1, text=t), score=0.5)
+        for i, t in enumerate(texts, start=1)
+    ]
+    return build_prompt(question, contexts)
+
+
+def test_echo_does_not_glue_headings_to_sentences() -> None:
+    from rag_pdf_qa.llm import EchoLLM
+
+    text = "Transfer dall'aeroporto di Bari\nIl transfer dall'aeroporto di Bari a Monopoli costa 85 euro."
+    answer = EchoLLM(max_sentences=1).generate(_prompt("Quanto costa il transfer da Bari a Monopoli?", text))
+    assert answer == "Il transfer dall'aeroporto di Bari a Monopoli costa 85 euro. [d.pdf p.1]"
+
+
+def test_echo_skips_overlap_fragments_and_duplicates() -> None:
+    from rag_pdf_qa.llm import EchoLLM
+
+    first = "Il van costa il 30% in più. La corsa notturna costa 15 euro in più."
+    second = "notturna costa 15 euro in più.\nLa corsa notturna costa 15 euro in più."  # sovrapposizione
+    answer = EchoLLM(max_sentences=3).generate(_prompt("Quanto costa la corsa notturna?", first, second))
+    assert answer.count("La corsa notturna costa 15 euro in più.") == 1
+    assert not answer.startswith("notturna")
+
+
+def test_echo_uses_heading_as_context() -> None:
+    from rag_pdf_qa.llm import EchoLLM
+
+    text = (
+        "Orari di apertura\n"
+        "La sede è aperta dalle 9:00 alle 19:00.\n"
+        "Contatti\n"
+        "Per informazioni scrivi alla sede durante l'orario di apertura."
+    )
+    answer = EchoLLM(max_sentences=1).generate(_prompt("Quali sono gli orari di apertura della sede?", text))
+    assert "9:00" in answer and "Orari di apertura" not in answer

@@ -18,11 +18,64 @@ class LoaderError(Exception):
     """Errore nella lettura dei documenti."""
 
 
+_HEADING_MAX_CHARS = 80
+_HEADING_MAX_WORDS = 10
+_ENDS_SENTENCE = re.compile(r"[.!?:;]$")
+_ENDS_LINE_WITH_PUNCT = re.compile(r"[.!?:;,]$")
+# una riga che finisce con un articolo, una preposizione o una congiunzione continua sotto
+_CONTINUES = {
+    "a", "ad", "al", "alla", "alle", "agli", "ai", "che", "con", "da", "dal", "dalla", "dalle", "dei",
+    "del", "della", "delle", "degli", "di", "e", "ed", "gli", "i", "il", "in", "la", "le", "lo", "nel",
+    "nella", "nelle", "o", "per", "su", "sul", "sulla", "tra", "fra", "un", "una", "uno",
+    "and", "of", "the", "to", "for", "with", "or",
+}
+
+
+def _is_heading(line: str, previous_ends_block: bool, following: str | None) -> bool:
+    """Una riga è un titolo se è corta, non termina con punteggiatura né con una parola che
+    richiede un seguito, la precede la fine di una frase o un altro titolo (o l'inizio della
+    pagina) e la riga dopo comincia con maiuscola o cifra.
+
+    Le righe di testo andate a capo invece continuano con una minuscola, sono lunghe quanto
+    la colonna o finiscono con "di", "e", "per"…, quindi restano unite al paragrafo.
+    """
+    words = line.split()
+    if not words or len(line) > _HEADING_MAX_CHARS or len(words) > _HEADING_MAX_WORDS:
+        return False
+    if _ENDS_LINE_WITH_PUNCT.search(line) or words[-1].lower() in _CONTINUES:
+        return False
+    if not previous_ends_block:
+        return False
+    return following is None or following[:1].isupper() or following[:1].isdigit()
+
+
+def separate_headings(text: str) -> str:
+    """Mette i titoli in paragrafi separati (riga vuota prima e dopo), così non vengono
+    incollati alla frase successiva: "Bagagli\nOgni passeggero..." → "Bagagli\n\nOgni passeggero..."."""
+    lines = [line.strip() for line in text.split("\n")]
+    out: list[str] = []
+    previous_ends_block = True  # inizio pagina
+    for i, line in enumerate(lines):
+        if not line:
+            out.append("")
+            previous_ends_block = True
+            continue
+        following = next((nxt for nxt in lines[i + 1 :] if nxt), None)
+        if _is_heading(line, previous_ends_block, following):
+            out.extend(["", line, ""])
+            previous_ends_block = True
+        else:
+            out.append(line)
+            previous_ends_block = bool(_ENDS_SENTENCE.search(line))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out))
+
+
 def clean_text(text: str) -> str:
-    """Normalizza il testo estratto: unisce le parole spezzate a fine riga e gli spazi multipli."""
+    """Normalizza il testo estratto: parole spezzate a fine riga, spazi multipli e titoli."""
     text = text.replace("\x00", "")
     text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)  # "infor-\nmatica" -> "informatica"
     text = re.sub(r"[ \t]+", " ", text)
+    text = separate_headings(text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 

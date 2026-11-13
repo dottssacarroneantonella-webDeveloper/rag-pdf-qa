@@ -139,18 +139,76 @@ class EchoLLM(LLM):
         self.max_sentences = max_sentences
 
     def generate(self, prompt: Prompt) -> str:
-        query = keywords(prompt.question)
-        scored: list[tuple[int, int, str, str]] = []
+        query = stems(keywords(prompt.question))
+        candidates: list[tuple[int, int, str, str, set[str], set[str]]] = []
+        seen: set[str] = set()
         for rank, result in enumerate(prompt.contexts):
-            for sentence in re.split(r"(?<!Art\.)(?<=[.!?])\s+", result.chunk.text):
-                overlap = len(query & keywords(sentence))
-                if overlap:
-                    scored.append((overlap, -rank, sentence.strip(), result.chunk.citation))
+            heading: set[str] = set()
+            for position, sentence in enumerate(split_sentences(result.chunk.text)):
+                if is_heading(sentence):
+                    # il titolo non entra nella risposta, ma le sue parole danno contesto alle frasi
+                    # della sezione ("Orari di apertura" → "La biblioteca è aperta dalle 9:00...")
+                    heading = stems(keywords(sentence))
+                    continue
+                key = " ".join(sentence.lower().split())
+                if key in seen or not is_answer_sentence(sentence):
+                    continue  # duplicati (sovrapposizione tra chunk), domande e frammenti
+                seen.add(key)
+                candidates.append((rank, position, sentence, result.chunk.citation, stems(keywords(sentence)), heading))
+
+        # le parole presenti in molte frasi ("costa", "transfer") pesano meno di quelle rare ("van")
+        frequency: dict[str, int] = {}
+        for *_, words, _heading in candidates:
+            for word in words & query:
+                frequency[word] = frequency.get(word, 0) + 1
+
+        def weight(words: set[str]) -> float:
+            return sum(1 / frequency.get(word, 1) for word in words)
+
+        scored: list[tuple[float, int, int, str, str]] = []
+        for rank, position, sentence, citation, words, heading in candidates:
+            matched = query & words
+            if matched:
+                # bonus di sezione: la frase sta sotto un titolo che parla di ciò che si chiede
+                score = weight(matched) + weight(query & heading)
+                scored.append((score, -rank, -position, sentence, citation))
         if not scored:
             return NOT_FOUND
         scored.sort(reverse=True)
-        best = scored[: self.max_sentences]
-        return " ".join(f"{sentence} [{citation}]" for _, _, sentence, citation in best)
+        # oltre alla migliore, solo frasi altrettanto pertinenti: niente "riempitivi"
+        top = scored[0][0]
+        best = [item for item in scored if item[0] >= top - 1e-9][: self.max_sentences]
+        return " ".join(f"{sentence} [{citation}]" for *_, sentence, citation in best)
+
+
+_SENTENCE_SPLIT = re.compile(r"(?<!Art\.)(?<=[.!?])\s+|\n+")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Frasi del testo: si divide sulla punteggiatura finale e sugli a capo tra paragrafi."""
+    return [s.strip() for s in _SENTENCE_SPLIT.split(text) if s and s.strip()]
+
+
+def stems(words: set[str]) -> set[str]:
+    """Radice approssimata (prime 4 lettere) per confrontare singolare e plurale, maschile e
+    femminile: "corsa"/"corse", "notturna"/"notturne", "apertura"/"aperta"."""
+    return {w[:4] if len(w) > 4 else w for w in words}
+
+
+def is_heading(sentence: str) -> bool:
+    """Titolo di sezione: riga corta (meno di 12 parole) senza punteggiatura finale."""
+    return not re.search(r"[.!?:;,]$", sentence) and len(sentence.split()) < 12 and sentence[:1].isupper()
+
+
+def is_answer_sentence(sentence: str) -> bool:
+    """Scarta i titoli (corti e senza punto finale) e i frammenti che cominciano a metà frase,
+    creati dalla sovrapposizione tra chunk (prima lettera minuscola)."""
+    first = sentence[:1]
+    if first.isalpha() and first.islower():
+        return False
+    if sentence.endswith("?"):
+        return False  # una domanda (es. il titolo di una FAQ) non è una risposta
+    return bool(re.search(r"[.!?]$", sentence)) or len(sentence.split()) >= 12
 
 
 def create_llm(settings: Settings) -> LLM:

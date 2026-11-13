@@ -3,4 +3,4 @@
 from rag_pdf_qa.models import Answer, Chunk, Page, SearchResult
 
 __all__ = ["Answer", "Chunk", "Page", "SearchResult"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

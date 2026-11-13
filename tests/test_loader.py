@@ -34,3 +34,29 @@ def test_invalid_pdf(tmp_path: Path) -> None:
     fake.write_text("non sono un pdf")
     with pytest.raises(LoaderError):
         load_pdf(fake)
+
+
+def test_headings_become_separate_paragraphs() -> None:
+    from rag_pdf_qa.loader import clean_text
+
+    raw = (
+        "Listino prezzi 2026\n"
+        "Transfer dall'aeroporto di Bari\n"
+        "Il transfer per Monopoli costa 85 euro. Il transfer per Lecce\n"
+        "costa 120 euro.\n"
+        "Bagagli\n"
+        "Ogni passeggero porta una valigia."
+    )
+    text = clean_text(raw)
+    paragraphs = text.split("\n\n")
+    assert "Transfer dall'aeroporto di Bari" in paragraphs
+    assert "Bagagli" in paragraphs
+    # una riga andata a capo a metà frase resta nel suo paragrafo
+    assert any("Lecce\ncosta 120 euro." in p for p in paragraphs)
+
+
+def test_wrapped_line_ending_with_capitalized_word_is_not_a_heading() -> None:
+    from rag_pdf_qa.loader import clean_text
+
+    raw = "Il servizio è attivo tutto l'anno e copre le province di Bari e di\nBrindisi con auto e van."
+    assert "\n\n" not in clean_text(raw)

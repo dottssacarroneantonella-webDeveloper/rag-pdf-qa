@@ -59,13 +59,14 @@ def chunk_page(page: Page, chunk_size: int = 800, overlap: int = 150) -> list[Ch
     texts: list[str] = []
     current = ""
     for unit in _split_units(page.text, chunk_size):
-        candidate = f"{current} {unit}".strip() if current else unit
+        # i paragrafi (e i titoli) restano su righe diverse: non diventano parte della frase dopo
+        candidate = f"{current}\n{unit}" if current else unit
         if len(candidate) <= chunk_size:
             current = candidate
             continue
         texts.append(current)
         prefix = _tail(current, overlap)
-        current = f"{prefix} {unit}".strip() if prefix and len(prefix) + 1 + len(unit) <= chunk_size else unit
+        current = f"{prefix}\n{unit}" if prefix and len(prefix) + 1 + len(unit) <= chunk_size else unit
     if current:
         texts.append(current)
 
